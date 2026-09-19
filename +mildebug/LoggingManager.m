@@ -84,21 +84,24 @@ classdef LoggingManager < handle
                     src=c.SrcPortHandle(1);
                     logName=sprintf('MILDP_S%06d',k);
 
-                    % DataLogging is an instrumentation property of the
-                    % source/output port. Keep the line setting as a
-                    % compatibility fallback for releases/block types that
-                    % expose it there.
-                    set_param(src,'DataLogging',1);
+                    % Use the supported signal-logging API rather than
+                    % depending only on raw DataLogging properties. This marks
+                    % the signal represented by this source port for logging.
+                    % The Dataset entry is mapped later by source block + port.
+                    Simulink.sdi.markSignalForStreaming(src,'on');
+
+                    % Keep DataLogging enabled as a compatibility fallback for
+                    % models/block types that expose the instrumentation flag.
+                    try, set_param(src,'DataLogging',1); catch, end
                     try, set_param(h,'DataLogging',1); catch, end
 
-                    % Give every captured source signal a unique logging name.
+                    % Custom names are useful for diagnostics, but are NOT
+                    % required for mapping. Dataset BlockPath + PortIndex is
+                    % the authoritative identity after simulation.
                     try
                         set_param(src,'DataLoggingNameMode','Custom');
                         set_param(src,'DataLoggingName',logName);
                     catch
-                        % Some port types do not expose custom naming. The
-                        % signal is still logged and can be recovered by
-                        % propagated/original name.
                     end
 
                     srcBlock=safeGet(src,'Parent','');
