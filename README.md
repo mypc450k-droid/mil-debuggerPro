@@ -6,11 +6,27 @@ Universal post-run MIL exploration and live debugging framework for MATLAB/Simul
 
 Target: MATLAB/Simulink R2024b, primary .mdl compatibility with .slx supported where the same APIs apply.
 
-## First workflow
-1. Open a Simulink model.
-2. Launch `MILDebuggerPro`.
-3. Run MIL once.
-4. Inspect discovered blocks/signals without rerunning.
-5. Use cached analysis and a synchronized time cursor.
+## Launch
 
-The implementation reports capture coverage and never fabricates unsupported runtime evidence.
+Open your Simulink model, then:
+
+    addpath(genpath('mil-debuggerPro'))
+    app = MILDebuggerProApp();
+
+## Core workflow
+1. Detect the currently open model.
+2. Inventory the model hierarchy and signal lines.
+3. Snapshot logging configuration.
+4. Compile/update the model.
+5. Run MIL once.
+6. Cache SimulationOutput and derived indexes.
+7. Select any block and inspect cached evidence without rerunning.
+8. Inspect plots, samples, diagnostics, Stateflow metadata and structural traces.
+
+## Engineering principles
+- Selecting a block never calls sim.
+- Original logging configuration can be restored.
+- Capture limitations are reported explicitly.
+- Static Stateflow metadata is never presented as runtime transition evidence.
+
+See docs/ARCHITECTURE.md, docs/R2024B_API_NOTES.md and docs/USER_GUIDE.md.

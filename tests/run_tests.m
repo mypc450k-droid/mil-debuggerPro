@@ -1,5 +1,5 @@
 function results=run_tests()
-%RUN_TESTS Core framework smoke tests.
+%RUN_TESTS Core framework smoke tests for MATLAB R2024b.
 results=struct();
 results.Config=~isempty(mildebug.MILDebuggerProConfig.SupportedRelease);
 results.ModelManager=~isempty(mildebug.ModelManager());
