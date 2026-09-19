@@ -113,31 +113,34 @@ classdef MILDebuggerProApp < handle
                 'SelectionChangedFcn',@(~,~)app.inspectSelection());
             app.BlockTree.Tooltip=['Optional structural browser. For analysis, select blocks directly in the ' ...
                 'Simulink canvas and use Use Model Selection.'];
-            app.UseModelSelectionButton=uibutton(left,'push','Text','Use Model Selection', ...
-                'Position',[10 190 145 28], ...
+            % Direct canvas workflow. Keep the legacy tree-analysis controls hidden so
+            % they cannot overlap these controls or compete with the canvas workflow.
+            app.UseModelSelectionButton=uibutton(left,'push','Text','Read Canvas Selection', ...
+                'Position',[10 190 185 30], ...
                 'ButtonPushedFcn',@(~,~)app.syncModelSelection(true));
             app.AnalyzeModelIOButton=uibutton(left,'push','Text','Analyze Block I/O', ...
-                'Position',[165 190 135 28], ...
+                'Position',[205 190 185 30], ...
                 'ButtonPushedFcn',@(~,~)app.analyzeCanvasSelection());
             app.ClearIOGraphButton=uibutton(left,'push','Text','Clear I/O Graph', ...
-                'Position',[305 190 95 28], ...
+                'Position',[10 152 185 30], ...
                 'ButtonPushedFcn',@(~,~)app.clearIOGraph());
             app.AnalyzeTreeButton=uibutton(left,'push','Text','Analyze Tree Selection', ...
                 'Visible','off', ...
-                'Position',[10 190 190 28], ...
+                'Position',[10 110 185 30], ...
                 'ButtonPushedFcn',@(~,~)app.analyzeTreeSelection());
             app.ClearGraphButton=uibutton(left,'push','Text','Clear Graph', ...
-                'Position',[210 190 90 28], ...
+                'Visible','off', ...
+                'Position',[205 110 185 30], ...
                 'ButtonPushedFcn',@(~,~)app.clearGraph());
             app.ClearSelectionButton=uibutton(left,'push','Text','Clear Selection', ...
-                'Position',[305 190 95 28], ...
+                'Position',[205 152 185 30], ...
                 'ButtonPushedFcn',@(~,~)app.clearAnalysisSelection());
-            app.ModelSelectionLabel=uilabel(left,'Position',[10 135 390 45], ...
+            app.ModelSelectionLabel=uilabel(left,'Position',[10 105 380 42], ...
                 'Text','Canvas selection: none','FontWeight','bold','WordWrap','on');
-            app.SelectedLabel=uilabel(left,'Position',[10 75 390 45], ...
-                'Text','Selected: none','FontWeight','bold','WordWrap','on');
-            uilabel(left,'Position',[10 25 390 22], ...
-                'Text','Select blocks in Simulink with Ctrl+Click. No Model Explorer needed.');
+            app.SelectedLabel=uilabel(left,'Position',[10 55 380 42], ...
+                'Text','Tree selection: none','FontWeight','bold','WordWrap','on');
+            uilabel(left,'Position',[10 20 380 28], ...
+                'Text','Select directly in Simulink. Shift+click, Ctrl+space, or a selection box are supported by Simulink.');
 
             app.TabGroup=uitabgroup(app.UIFigure,'Position',[430 10 1100 760]);
             tab1=uitab(app.TabGroup,'Title','Block I/O');
@@ -742,30 +745,61 @@ classdef MILDebuggerProApp < handle
             if nargin<2, showStatus=false; end
             if isempty(app.ModelName) || ~bdIsLoaded(app.ModelName), return; end
             try
-                hs=find_system(app.ModelName,'FindAll','on','Type','Block');
+                % IMPORTANT: Simulink selection is scoped to the system currently
+                % open in the editor. Reading the whole model can miss the
+                % selection when the user is inside a subsystem. Use gcs /
+                % CurrentSystem first, then fall back to the model root.
+                currentSystem='';
+                try, currentSystem=char(string(gcs)); catch, end
+                if isempty(currentSystem)
+                    try, currentSystem=char(string(get_param(0,'CurrentSystem'))); catch, end
+                end
+                if isempty(currentSystem) || ~bdIsLoaded(bdroot(currentSystem))
+                    currentSystem=app.ModelName;
+                end
+                if ~strcmp(bdroot(currentSystem),app.ModelName)
+                    currentSystem=app.ModelName;
+                end
+
+                % MathWorks documents find_system(gcs,'Selected','on') for
+                % reading multiple selected Simulink elements. Restrict this
+                % read to blocks so selected lines/annotations are ignored.
+                hs=find_system(currentSystem,'FindAll','on','Type','Block','Selected','on');
                 selected={};
                 for k=1:numel(hs)
                     try
-                        if strcmp(get_param(hs(k),'Selected'),'on')
-                            selected{end+1}=char(string(getfullname(hs(k)))); %#ok<AGROW>
+                        p=char(string(getfullname(hs(k))));
+                        if strcmp(bdroot(p),app.ModelName)
+                            selected{end+1}=p; %#ok<AGROW>
                         end
                     catch
                     end
                 end
                 selected=unique(selected,'stable');
                 key=strjoin(selected,'|');
+
+                % Do not silently erase a valid selection just because focus
+                % moved from the Simulink editor to this app window.
+                if isempty(selected) && ~isempty(app.CanvasSelectedBlocks) && ~showStatus
+                    return
+                end
                 if strcmp(key,app.LastCanvasSelectionKey), return; end
+
                 app.LastCanvasSelectionKey=key;
                 app.CanvasSelectedBlocks=selected;
                 if isempty(selected)
                     app.ModelSelectionLabel.Text='Canvas selection: none';
+                    if showStatus
+                        app.setStatus('No Simulink blocks are currently selected. Select blocks in the model canvas first.');
+                    end
                     return
                 end
+
                 names=cellfun(@(p)char(string(get_param(p,'Name'))),selected,'UniformOutput',false);
                 app.ModelSelectionLabel.Text=sprintf('Canvas selection: %d block(s) | %s', ...
                     numel(selected),strjoin(names,', '));
                 if showStatus
-                    app.setStatus(sprintf('Captured %d block(s) selected directly in the Simulink canvas.',numel(selected)));
+                    app.setStatus(sprintf('Read %d block(s) from the Simulink canvas selection.',numel(selected)));
                 end
             catch ME
                 if showStatus, app.setStatus(['Could not read Simulink selection: ' ME.message]); end
@@ -775,7 +809,7 @@ classdef MILDebuggerProApp < handle
         function analyzeCanvasSelection(app)
             app.syncModelSelection(true);
             if isempty(app.CanvasSelectedBlocks)
-                app.setStatus('Select one or more blocks directly in the Simulink model using Ctrl+Click, then click Analyze Block I/O.');
+                app.setStatus('Select blocks directly in Simulink, then click Analyze Block I/O.');
                 return
             end
             if ~app.Core.Session.isSessionReady()
@@ -796,6 +830,23 @@ classdef MILDebuggerProApp < handle
                         dst=s(k).DstBlockPaths;
                         if ischar(dst), dst={dst}; end
                         isIn=any(strcmp(dst,blk));
+
+                        % Prefer exact line-handle topology. This is more
+                        % reliable than block-path text, especially for
+                        % branches, buses and nested subsystems.
+                        lineHandles=app.getConnectedLineHandles(blk);
+                        if ~isempty(lineHandles) && ~isempty(s(k).LineHandle)
+                            if any(double(lineHandles)==double(s(k).LineHandle))
+                                try
+                                    src=char(string(s(k).SrcBlockPath));
+                                    isOut=isOut || strcmp(src,blk);
+                                    if ~isOut
+                                        isIn=any(strcmp(dst,blk));
+                                    end
+                                catch
+                                end
+                            end
+                        end
                     catch
                     end
                     if isIn || isOut
@@ -828,6 +879,24 @@ classdef MILDebuggerProApp < handle
             else
                 app.setStatus(sprintf('Analyzed %d selected block(s): %d input and %d output signal(s). No simulation was run.', ...
                     numel(app.CanvasSelectedBlocks),ni,no));
+            end
+        end
+
+        function lines=getConnectedLineHandles(~,blockPath)
+            lines=[];
+            try
+                lh=get_param(blockPath,'LineHandles');
+                f=fieldnames(lh);
+                for i=1:numel(f)
+                    v=lh.(f{i});
+                    if isempty(v), continue; end
+                    v=double(v(:));
+                    v=v(v~=-1 & isfinite(v));
+                    lines=[lines; v(:)]; %#ok<AGROW>
+                end
+                lines=unique(lines);
+            catch
+                lines=[];
             end
         end
 
