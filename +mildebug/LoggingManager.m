@@ -3,7 +3,7 @@ classdef LoggingManager < handle
     properties (Access=private)
         Snapshot = struct()
         LineSnapshot = struct('Handle',{},'DataLogging',{},'Name',{}, ...
-            'SrcPortHandle',{},'SrcDataLoggingNameMode',{},'SrcDataLoggingName',{})
+            'SrcPortHandle',{},'SrcDataLogging',{},'SrcDataLoggingNameMode',{},'SrcDataLoggingName',{})
         CaptureMap = struct('LineHandle',{},'LogName',{},'OriginalName',{}, ...
             'SrcPortHandle',{},'SrcBlockPath',{},'SrcPortNumber',{}, ...
             'DstBlockPaths',{})
@@ -19,16 +19,19 @@ classdef LoggingManager < handle
             end
             obj.LineSnapshot=obj.LineSnapshot([]);
             obj.CaptureMap=obj.CaptureMap([]);
-            lines=find_system(modelName,'FindAll','on','Type','line');
+            lines=find_system(modelName,'LookUnderMasks','all','FollowLinks','on', ...
+                'FindAll','on','Type','line','SegmentType','trunk');
             for k=1:numel(lines)
                 try
                     src=get_param(lines(k),'SrcPortHandle');
                     if isempty(src) || src==-1, src=[]; end
+                    if isempty(src), continue; end
                     obj.LineSnapshot(end+1)=struct( ...
                         'Handle',lines(k), ...
-                        'DataLogging',get_param(lines(k),'DataLogging'), ...
+                        'DataLogging',safeGet(lines(k),'DataLogging',0), ...
                         'Name',safeGet(lines(k),'Name',''), ...
                         'SrcPortHandle',src, ...
+                        'SrcDataLogging',safeGet(src,'DataLogging',0), ...
                         'SrcDataLoggingNameMode',safeGet(src,'DataLoggingNameMode','SignalName'), ...
                         'SrcDataLoggingName',safeGet(src,'DataLoggingName','')); %#ok<AGROW>
                 catch
@@ -37,16 +40,25 @@ classdef LoggingManager < handle
         end
 
         function plan=discoverLoggableSignals(~,modelName)
-            lines=find_system(modelName,'FindAll','on','Type','line');
+            % A signal is represented by its source/output port. MathWorks
+            % documents using trunk signal segments to find source ports and
+            % enabling DataLogging on that source port. This avoids counting
+            % branch segments as separate signals and avoids missing signals
+            % whose branch segments have no SrcPortHandle.
+            lines=find_system(modelName,'LookUnderMasks','all','FollowLinks','on', ...
+                'FindAll','on','Type','line','SegmentType','trunk');
             plan=struct('Count',numel(lines),'Handles',lines,'Candidates',{{}},'Unsupported',{{}});
             c={}; u={};
+            seenPorts=[];
             for k=1:numel(lines)
                 try
                     src=get_param(lines(k),'SrcPortHandle');
-                    if ~isempty(src) && all(src~=-1)
-                        c{end+1}=struct('Handle',lines(k),'Name',safeGet(lines(k),'Name',''), ...
-                            'SrcPortHandle',src); %#ok<AGROW>
-                    end
+                    if isempty(src) || any(double(src)==-1), continue; end
+                    src=double(src(1));
+                    if any(seenPorts==src), continue; end
+                    seenPorts(end+1)=src; %#ok<AGROW>
+                    c{end+1}=struct('Handle',lines(k),'Name',safeGet(lines(k),'Name',''), ...
+                        'SrcPortHandle',src); %#ok<AGROW>
                 catch ME
                     u{end+1}=struct('Handle',lines(k),'Reason',ME.message); %#ok<AGROW>
                 end
@@ -71,29 +83,41 @@ classdef LoggingManager < handle
                 try
                     src=c.SrcPortHandle(1);
                     logName=sprintf('MILDP_S%06d',k);
-                    set_param(h,'DataLogging',1);
-                    % Give every captured line a unique logging name so the
-                    % post-run dataset can be mapped back to this exact line.
+
+                    % DataLogging is an instrumentation property of the
+                    % source/output port. Keep the line setting as a
+                    % compatibility fallback for releases/block types that
+                    % expose it there.
+                    set_param(src,'DataLogging',1);
+                    try, set_param(h,'DataLogging',1); catch, end
+
+                    % Give every captured source signal a unique logging name.
                     try
                         set_param(src,'DataLoggingNameMode','Custom');
                         set_param(src,'DataLoggingName',logName);
                     catch
                         % Some port types do not expose custom naming. The
-                        % line remains logged and is still recoverable by path.
+                        % signal is still logged and can be recovered by
+                        % propagated/original name.
                     end
 
                     srcBlock=safeGet(src,'Parent','');
                     srcPort=safeGet(src,'PortNumber',k);
-                    dstBlocks={};
-                    try
-                        dst=get_param(h,'DstPortHandle');
-                        for j=1:numel(dst)
-                            if dst(j)~=-1
-                                dstBlocks{end+1}=safeGet(dst(j),'Parent',''); %#ok<AGROW>
+                    dstBlocks=collectDestBlocks(h);
+                    if isempty(dstBlocks)
+                        % For unusual line objects, fall back to the direct
+                        % destination handle.
+                        try
+                            dst=get_param(h,'DstPortHandle');
+                            for j=1:numel(dst)
+                                if dst(j)~=-1
+                                    dstBlocks{end+1}=safeGet(dst(j),'Parent',''); %#ok<AGROW>
+                                end
                             end
+                        catch
                         end
-                    catch
                     end
+                    dstBlocks=unique(dstBlocks,'stable');
 
                     obj.CaptureMap(end+1)=struct( ...
                         'LineHandle',h,'LogName',logName, ...
@@ -122,6 +146,7 @@ classdef LoggingManager < handle
                 h=obj.LineSnapshot(k).Handle;
                 try, set_param(h,'DataLogging',obj.LineSnapshot(k).DataLogging); catch, end
                 src=obj.LineSnapshot(k).SrcPortHandle;
+                try, if ~isempty(src), set_param(src,'DataLogging',obj.LineSnapshot(k).SrcDataLogging); end, catch, end
                 try, if ~isempty(src), set_param(src,'DataLoggingNameMode',obj.LineSnapshot(k).SrcDataLoggingNameMode); end, catch, end
                 try, if ~isempty(src), set_param(src,'DataLoggingName',obj.LineSnapshot(k).SrcDataLoggingName); end, catch, end
             end
@@ -140,4 +165,27 @@ try
 catch
     v=d;
 end
+end
+
+function dstBlocks=collectDestBlocks(lineHandle)
+dstBlocks={};
+try
+    dst=get_param(lineHandle,'DstPortHandle');
+    for k=1:numel(dst)
+        if dst(k)~=-1
+            p=safeGet(dst(k),'Parent','');
+            if ~isempty(p), dstBlocks{end+1}=char(string(p)); end %#ok<AGROW>
+        end
+    end
+catch
+end
+try
+    kids=get_param(lineHandle,'LineChildren');
+    for k=1:numel(kids)
+        childDst=collectDestBlocks(kids(k));
+        dstBlocks=[dstBlocks childDst]; %#ok<AGROW>
+    end
+catch
+end
+dstBlocks=unique(dstBlocks,'stable');
 end
