@@ -3,7 +3,7 @@ classdef LoggingManager < handle
     properties (Access=private)
         Snapshot = struct()
         LineSnapshot = struct('Handle',{},'DataLogging',{},'Name',{}, ...
-            'DataLoggingNameMode',{},'DataLoggingName',{})
+            'SrcPortHandle',{},'SrcDataLoggingNameMode',{},'SrcDataLoggingName',{})
         CaptureMap = struct('LineHandle',{},'LogName',{},'OriginalName',{}, ...
             'SrcPortHandle',{},'SrcBlockPath',{},'SrcPortNumber',{}, ...
             'DstBlockPaths',{})
@@ -22,12 +22,15 @@ classdef LoggingManager < handle
             lines=find_system(modelName,'FindAll','on','Type','line');
             for k=1:numel(lines)
                 try
+                    src=get_param(lines(k),'SrcPortHandle');
+                    if isempty(src) || src==-1, src=[]; end
                     obj.LineSnapshot(end+1)=struct( ...
                         'Handle',lines(k), ...
                         'DataLogging',get_param(lines(k),'DataLogging'), ...
                         'Name',safeGet(lines(k),'Name',''), ...
-                        'DataLoggingNameMode',safeGet(lines(k),'DataLoggingNameMode','SignalName'), ...
-                        'DataLoggingName',safeGet(lines(k),'DataLoggingName','')); %#ok<AGROW>
+                        'SrcPortHandle',src, ...
+                        'SrcDataLoggingNameMode',safeGet(src,'DataLoggingNameMode','SignalName'), ...
+                        'SrcDataLoggingName',safeGet(src,'DataLoggingName','')); %#ok<AGROW>
                 catch
                 end
             end
@@ -118,8 +121,9 @@ classdef LoggingManager < handle
             for k=1:numel(obj.LineSnapshot)
                 h=obj.LineSnapshot(k).Handle;
                 try, set_param(h,'DataLogging',obj.LineSnapshot(k).DataLogging); catch, end
-                try, set_param(h,'DataLoggingNameMode',obj.LineSnapshot(k).DataLoggingNameMode); catch, end
-                try, set_param(h,'DataLoggingName',obj.LineSnapshot(k).DataLoggingName); catch, end
+                src=obj.LineSnapshot(k).SrcPortHandle;
+                try, if ~isempty(src), set_param(src,'DataLoggingNameMode',obj.LineSnapshot(k).SrcDataLoggingNameMode); end, catch, end
+                try, if ~isempty(src), set_param(src,'DataLoggingName',obj.LineSnapshot(k).SrcDataLoggingName); end, catch, end
             end
             if isempty(fieldnames(obj.Snapshot)), return; end
             names=fieldnames(obj.Snapshot);
