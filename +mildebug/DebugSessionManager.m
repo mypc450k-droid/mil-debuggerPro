@@ -11,6 +11,10 @@ classdef DebugSessionManager < handle
             s.Signals=obj.indexSignals(simResult.Output);
             obj.Session=s;
         end
+        function clear(obj)
+            %CLEAR Discard cached data when the active model changes.
+            obj.Session=struct();
+        end
         function tf=isValid(obj,modelName)
             tf=isfield(obj.Session,'Valid') && obj.Session.Valid && strcmp(string(obj.Session.ModelName),string(modelName));
         end
