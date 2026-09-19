@@ -258,7 +258,7 @@ classdef MILDebuggerProApp < handle
         end
 
         function pollSelection(app)
-            if isempty(app.ModelName) || ~isvalid(app.UIFigure), return; end
+            if ~isvalid(app.UIFigure), return; end
             try
                 % Detect a model switch without opening or selecting an
                 % arbitrary loaded file. This keeps the GUI synchronized
