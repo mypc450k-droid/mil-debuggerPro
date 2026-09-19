@@ -231,6 +231,9 @@ classdef MILDebuggerProApp < handle
 
                 if modelChanged
                     app.Core.Session.clear();
+                    app.CanvasSelectedBlocks={};
+                    app.LastCanvasSelectionKey='';
+                    app.ModelSelectionLabel.Text='Canvas selection: none';
                     app.SessionLabel.Text='No cached MIL session for active model';
                     app.clearGraph();
                     app.clearSignalList();
@@ -507,6 +510,9 @@ classdef MILDebuggerProApp < handle
             end
             app.updateSignalSelectionInfo();
             app.SelectedLabel.Text='Selected: none';
+            app.CanvasSelectedBlocks={};
+            app.LastCanvasSelectionKey='';
+            app.ModelSelectionLabel.Text='Canvas selection: none';
             app.setStatus('Analysis selection cleared. Cached MIL data is still available.');
         end
 
