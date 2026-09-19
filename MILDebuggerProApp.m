@@ -831,21 +831,15 @@ classdef MILDebuggerProApp < handle
                         if ischar(dst), dst={dst}; end
                         isIn=any(strcmp(dst,blk));
 
-                        % Prefer exact line-handle topology. This is more
-                        % reliable than block-path text, especially for
-                        % branches, buses and nested subsystems.
-                        lineHandles=app.getConnectedLineHandles(blk);
-                        if ~isempty(lineHandles) && ~isempty(s(k).LineHandle)
-                            if any(double(lineHandles)==double(s(k).LineHandle))
-                                try
-                                    src=char(string(s(k).SrcBlockPath));
-                                    isOut=isOut || strcmp(src,blk);
-                                    if ~isOut
-                                        isIn=any(strcmp(dst,blk));
-                                    end
-                                catch
-                                end
-                            end
+                        % Prefer exact line-handle topology. LineHandles
+                        % distinguishes input-side and output-side connections,
+                        % which is more reliable than path text for branches,
+                        % buses and nested subsystems.
+                        [inLines,outLines]=app.getConnectedLineHandles(blk);
+                        if ~isempty(s(k).LineHandle)
+                            lh=double(s(k).LineHandle);
+                            isIn=isIn || any(double(inLines)==lh);
+                            isOut=isOut || any(double(outLines)==lh);
                         end
                     catch
                     end
@@ -882,21 +876,22 @@ classdef MILDebuggerProApp < handle
             end
         end
 
-        function lines=getConnectedLineHandles(~,blockPath)
-            lines=[];
+        function [inLines,outLines]=getConnectedLineHandles(~,blockPath)
+            inLines=[]; outLines=[];
             try
                 lh=get_param(blockPath,'LineHandles');
-                f=fieldnames(lh);
-                for i=1:numel(f)
-                    v=lh.(f{i});
-                    if isempty(v), continue; end
-                    v=double(v(:));
-                    v=v(v~=-1 & isfinite(v));
-                    lines=[lines; v(:)]; %#ok<AGROW>
+                if isfield(lh,'Inport')
+                    inLines=double(lh.Inport(:));
+                    inLines=inLines(inLines~=-1 & isfinite(inLines));
                 end
-                lines=unique(lines);
+                if isfield(lh,'Outport')
+                    outLines=double(lh.Outport(:));
+                    outLines=outLines(outLines~=-1 & isfinite(outLines));
+                end
+                inLines=unique(inLines);
+                outLines=unique(outLines);
             catch
-                lines=[];
+                inLines=[]; outLines=[];
             end
         end
 
