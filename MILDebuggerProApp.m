@@ -459,11 +459,19 @@ classdef MILDebuggerProApp < handle
             n=numel(s);
             app.SignalDisplayNames=cell(1,n);
             for k=1:n
-                nm=char(string(s(k).Name));
-                bp=char(string(s(k).BlockPath));
-                if isempty(bp), bp='unmapped source'; end
+                nm=char(string(s(k).OriginalName));
+                if isempty(nm), nm=char(string(s(k).Name)); end
                 if isempty(nm), nm=sprintf('Signal %d',k); end
-                app.SignalDisplayNames{k}=sprintf('%04d | %s | %s',k,nm,bp);
+                src=char(string(s(k).SrcBlockPath));
+                dst='';
+                try
+                    if ~isempty(s(k).DstBlockPaths), dst=strjoin(s(k).DstBlockPaths,', '); end
+                catch
+                end
+                if isempty(src), src='unmapped source'; end
+                if isempty(dst), dst='unmapped destination'; end
+                app.SignalDisplayNames{k}=sprintf('%04d | %s | %s -> %s', ...
+                    k,nm,src,dst);
             end
             app.SignalList.Items=app.SignalDisplayNames;
             app.SignalList.ItemsData=1:n;
