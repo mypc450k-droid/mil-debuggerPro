@@ -25,16 +25,16 @@ The app resolves the model from the active Simulink editor context. It does not 
 4. Compile/update the model.
 5. Run MIL once.
 6. Cache the `SimulationOutput` and logged-signal index.
-7. Select one or many blocks/Stateflow elements with Ctrl+Click.
-8. Map the selection to cached signals and/or select exact logged signals in the Signals & Graph tab.
-9. Overlay any number of cached signals without rerunning MIL.
-10. Clear the graph and perform another analysis on the same cached run.
+7. Select one or many blocks directly in the Simulink canvas with Ctrl+Click.
+8. Use **Analyze Block I/O** to show cached inputs and outputs for those selected blocks.
+9. Use the Signals & Graph tab when exact signal-level selection is needed.
+10. Clear the I/O graph or signal graph and analyze another selection without rerunning MIL.
 
-## Multi-selection analysis
+## Direct Simulink canvas selection
 
-The Model Explorer uses the R2024b standard tree multi-selection mode. Hold **Ctrl** while clicking to select multiple blocks, Stateflow charts, states, transitions or data objects.
+The primary workflow is to select blocks directly in the Simulink Editor. Hold **Ctrl** to select multiple blocks, then click **Use Model Selection** or **Analyze Block I/O**. The app reads the selected blocks from Simulink and maps their captured input and output lines from the cached MIL run.
 
-Use **Analyze Tree Selection** to map those elements to cached signals. Because model-element-to-signal association is not universal for every Simulink block type, the app also exposes the exact cached `logsout` contents in a multi-select signal list. This avoids inventing associations.
+The structural tree remains available for browsing Stateflow and model hierarchy, but it is not required to decide which block to analyze.
 
 ## Graph controls
 
