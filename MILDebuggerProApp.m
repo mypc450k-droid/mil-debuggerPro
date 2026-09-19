@@ -4,8 +4,8 @@ classdef MILDebuggerProApp < handle
     % Run:
     %   app = MILDebuggerProApp();
     %
-    % The app runs simulation only from Run MIL. All ordinary inspection
-    % actions consume the cached session.
+    % Model selection is tied to the Simulink editor's active context.
+    % The app never chooses the first arbitrary loaded block diagram.
 
     properties
         UIFigure matlab.ui.Figure
@@ -32,7 +32,8 @@ classdef MILDebuggerProApp < handle
         ModelName char = ''
         Inventory struct = struct()
         Timer timer
-        PreviousModel char = ''
+        PreviousSelectedBlock char = ''
+        LastDetectionMessage char = ''
     end
 
     methods
@@ -77,8 +78,9 @@ classdef MILDebuggerProApp < handle
             left=uipanel(app.UIFigure,'Position',[10 10 390 880],'Title','Model Explorer');
             top=uipanel(app.UIFigure,'Position',[410 760 1080 130],'Title','MIL Session');
 
-            uilabel(top,'Position',[15 75 80 22],'Text','Model');
+            uilabel(top,'Position',[15 75 80 22],'Text','Active Model');
             app.ModelField=uieditfield(top,'text','Position',[95 75 620 22]);
+            app.ModelField.Editable='off';
             app.RefreshButton=uibutton(top,'push','Text','Refresh','Position',[730 75 90 22], ...
                 'ButtonPushedFcn',@(~,~)app.refreshModel());
             app.RunButton=uibutton(top,'push','Text','RUN MIL','Position',[830 75 105 22], ...
@@ -88,7 +90,8 @@ classdef MILDebuggerProApp < handle
             app.StatusLabel=uilabel(top,'Position',[15 42 1020 22],'Text','Ready');
             app.SessionLabel=uilabel(top,'Position',[15 15 1020 22],'Text','No cached MIL session');
 
-            app.BlockTree=uitree(left,'Position',[10 70 370 760],'SelectionChangedFcn',@(~,~)app.inspectSelection());
+            app.BlockTree=uitree(left,'Position',[10 70 370 760], ...
+                'SelectionChangedFcn',@(~,~)app.inspectSelection());
             app.SelectedLabel=uilabel(left,'Position',[10 25 370 30],'Text','Selected: none','FontWeight','bold');
 
             app.TabGroup=uitabgroup(app.UIFigure,'Position',[410 10 1080 735]);
@@ -122,16 +125,42 @@ classdef MILDebuggerProApp < handle
 
         function refreshModel(app)
             try
-                m=app.Core.ModelManager.detectActiveModel();
+                info=app.Core.ModelManager.detectActiveModelInfo();
+                m=info.Model;
+
                 if isempty(m)
-                    app.setStatus('No active Simulink model found.');
+                    % Do not keep a stale model after the user switches to
+                    % another Simulink window or closes the previous model.
+                    app.ModelName='';
+                    app.Inventory=struct();
+                    app.ModelField.Value='';
+                    delete(app.BlockTree.Children);
+                    app.SessionLabel.Text='No cached MIL session';
+                    app.setStatus(info.Message);
                     return
                 end
+
+                % If MATLAB reports a different active model, invalidate the
+                % previous inventory/session. The user must explicitly RUN
+                % MIL for the newly active model.
+                modelChanged=~strcmp(app.ModelName,m);
                 app.ModelName=m;
                 app.ModelField.Value=m;
+
+                if modelChanged
+                    app.Core.Session.clear();
+                    app.SessionLabel.Text='No cached MIL session for active model';
+                    cla(app.PlotAxes);
+                    app.InputTable.Data={};
+                    app.OutputTable.Data={};
+                    app.DiagnosticsTable.Data={};
+                    app.StateTable.Data={};
+                end
+
                 app.Inventory=app.Core.Discovery.discover(m);
                 app.populateTree();
-                app.setStatus(sprintf('Detected %s | %d blocks | %d signal lines',m, ...
+                app.LastDetectionMessage=info.Message;
+                app.setStatus(sprintf('%s | %d blocks | %d signal lines',info.Message, ...
                     app.Inventory.BlockCount,app.Inventory.SignalCount));
             catch ME
                 app.setStatus(['Refresh failed: ' ME.message]);
@@ -140,6 +169,7 @@ classdef MILDebuggerProApp < handle
 
         function populateTree(app)
             delete(app.BlockTree.Children);
+            if isempty(app.ModelName), return; end
             root=uitreenode(app.BlockTree,'Text',app.ModelName,'NodeData',app.ModelName);
             for k=1:numel(app.Inventory.Blocks)
                 b=app.Inventory.Blocks(k);
@@ -155,10 +185,18 @@ classdef MILDebuggerProApp < handle
                 if isempty(app.ModelName), return; end
             end
             app.RunButton.Enable='off';
-            app.setStatus('Preparing model and capture configuration...');
+            app.setStatus(['Preparing active model: ' app.ModelName]);
             drawnow;
             cleanup=onCleanup(@()set(app.RunButton,'Enable','on')); %#ok<NASGU>
             try
+                % Revalidate the active editor model immediately before
+                % changing logging or starting a simulation.
+                active=app.Core.ModelManager.detectActiveModel();
+                if isempty(active) || ~strcmp(active,app.ModelName)
+                    error('MILDebuggerPro:ActiveModelChanged', ...
+                        'The active Simulink model changed. Press Refresh and run MIL again.');
+                end
+
                 app.Core.Logging.captureSnapshot(app.ModelName);
                 app.Core.Logging.configure(app.ModelName);
                 app.setStatus('Compiling model...');
@@ -173,7 +211,7 @@ classdef MILDebuggerProApp < handle
                 app.SessionLabel.Text=sprintf('Cached session: %s | %.3fs | %d signals', ...
                     datestr(app.Core.Session.Session.CreatedAt,'yyyy-mm-dd HH:MM:SS'), ...
                     sr.Elapsed,numel(app.Core.Session.Session.Signals));
-                app.setStatus('MIL complete. Block inspection will use cached data and will not rerun simulation.');
+                app.setStatus('MIL complete. Block inspection uses cached data and will not rerun simulation.');
                 app.scanDiagnostics();
                 app.inspectStateflow();
             catch ME
@@ -188,7 +226,7 @@ classdef MILDebuggerProApp < handle
             app.SelectedLabel.Text=['Selected: ' path];
             app.Core.ModelManager.navigateToBlock(path);
             if ~app.Core.Session.isSessionReady()
-                app.setStatus('No cached MIL session. Run MIL first.');
+                app.setStatus('No cached MIL session for this model. Run MIL first.');
                 return
             end
             app.showCachedBlock(path);
@@ -222,9 +260,18 @@ classdef MILDebuggerProApp < handle
         function pollSelection(app)
             if isempty(app.ModelName) || ~isvalid(app.UIFigure), return; end
             try
+                % Detect a model switch without opening or selecting an
+                % arbitrary loaded file. This keeps the GUI synchronized
+                % with the Simulink editor.
+                active=app.Core.ModelManager.detectActiveModel();
+                if ~isempty(active) && ~strcmp(active,app.ModelName)
+                    app.refreshModel();
+                    return
+                end
+
                 p=app.Core.ModelManager.getSelectedBlock(app.ModelName);
-                if ~isempty(p) && ~strcmp(p,app.PreviousModel)
-                    app.PreviousModel=p;
+                if ~isempty(p) && ~strcmp(p,app.PreviousSelectedBlock)
+                    app.PreviousSelectedBlock=p;
                     app.SelectedLabel.Text=['MATLAB selected: ' p];
                 end
             catch
