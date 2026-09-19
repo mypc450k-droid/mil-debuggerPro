@@ -8,59 +8,109 @@ From the repository root:
     rehash path
     clear classes
 
-Open the intended Simulink model and click inside its editor. Then launch:
+Open the intended Simulink model, click inside it, and launch:
 
     app = MILDebuggerProApp();
 
-If MATLAB still resolves an older copy:
+Verify the loaded class if needed:
 
     which MILDebuggerProApp -all
 
-The first result should point to this repository.
+## Recommended workflow: select blocks directly in the Simulink canvas
+
+Do **not** use the left tree to decide which blocks to analyze.
+
+1. Open your model in the Simulink Editor.
+2. Select one block normally.
+3. Hold **Ctrl** and select additional blocks.
+4. Return to MIL Debugger Pro.
+5. Click **Use Model Selection** if you want to confirm the selection.
+6. Click **RUN MIL** once if you have not already created a cached session.
+7. Click **Analyze Block I/O**.
+8. The **Block I/O** tab shows:
+   - captured input signals connected to the selected blocks
+   - captured output signals produced by the selected blocks
+   - source/destination block paths
+   - signal names where available
+9. Select a different group of blocks in Simulink and click **Analyze Block I/O** again. No simulation is run.
+10. Click **Clear I/O Graph** when you want a clean analysis view.
+
+## Why the exact block I/O mapping matters
+
+The app no longer depends on a generic Signal 1, Signal 2, Signal 3 list to decide what a block means.
+
+Before MIL, the logger assigns a unique internal logging name to each capturable signal line and retains:
+
+- source block path
+- source port number
+- destination block path(s)
+- original signal name
+- exact line handle
+
+After MIL, the cached logsout dataset is joined back to that topology. This allows a selected block to be analyzed by its actual connected I/O.
 
 ## One-run MIL workflow
 
-1. Click **RUN MIL**.
-2. MIL Debugger Pro resolves the active Simulink model, configures capture, compiles/updates it and runs MIL once.
-3. The resulting `SimulationOutput` and signal index are cached in the session.
-4. Selecting blocks or Stateflow elements does not call `sim`.
-5. Switching models invalidates the old session. Run MIL again for the new model.
+1. Select the intended active model.
+2. Click **RUN MIL**.
+3. MIL Debugger Pro snapshots the original logging configuration.
+4. It configures broad signal capture.
+5. It compiles/updates the model.
+6. It runs MIL once.
+7. It caches SimulationOutput and the signal-to-block topology.
+8. All later selection, plotting and analysis uses the cached run.
 
-## Selecting multiple model elements
+Selecting blocks or plotting data does not invoke sim.
 
-The left **Model Explorer** is a standard R2024b tree with multi-selection.
+## Block I/O tab
 
-- Hold **Ctrl** and click multiple blocks.
-- Expand **Stateflow** to see charts, states, transitions and logged-data metadata.
-- Select as many elements as needed.
-- Click **Analyze Tree Selection** to map selected elements to cached logged signals.
-- If an element cannot be mapped automatically, use the exact **Cached logged signals** list in the Signals & Graph tab.
+The tab has two graphs.
 
-The tree selection is an analysis selection. It does not rerun the model.
+### Selected Block Inputs
 
-## Selecting and plotting logged signals
+Signals whose destination is one of the selected blocks.
 
-After MIL completes, the **Signals & Graph** tab lists every signal found in the cached `logsout` dataset.
+### Selected Block Outputs
 
-- Hold **Ctrl** and select any number of signals.
-- **Plot Selected Signals** overlays the selected signals on one graph.
-- **Select All Logged** selects every cached signal.
-- **Clear Graph** removes the current plot only. Cached MIL data remains.
-- **Clear Signal Selection** removes the current signal/model selection so a new analysis can be started.
-- The **Time cursor** field shows the selected signals' values at the nearest captured sample.
+Signals whose source is one of the selected blocks.
 
-This is the most reliable path for exact signal selection because the list comes directly from the cached simulation output.
+For multiple selected blocks, the graphs contain the union of their captured inputs/outputs and the legend identifies source/destination paths.
+
+## Signals & Graph tab
+
+This remains available when you want exact signal-level analysis.
+
+- Ctrl+Click multiple cached signals.
+- **Plot Selected Signals** overlays them.
+- **Select All Logged** selects all cached signals.
+- **Clear Graph** removes the current signal graph.
+- **Clear Signal Selection** starts a new signal analysis without rerunning MIL.
+- The time cursor shows nearest captured values.
 
 ## Stateflow
 
-The Stateflow tab exposes static chart/state/transition metadata from the Stateflow API, including transition condition, trigger, source, destination and variables extracted from labels.
+The Stateflow tab exposes static metadata for charts, states, transitions and data. It does not claim that a transition executed unless runtime evidence has actually been captured.
 
-Runtime transition outcomes are not claimed unless runtime evidence was actually captured. The current MIL capture path does not fabricate a transition timeline.
+## Logging coverage and limitations
+
+Signal logging is not universal for every Simulink object. Some signal types and special block configurations cannot be captured through standard signal logging.
+
+Therefore the app must report capture gaps rather than inventing values. A selected block can have an input/output that is structurally present but not observable in logsout.
+
+For compiled port attributes such as dimensions and sample time, the model must be compiled/updated before querying compiled properties.
 
 ## Restore
 
-Click **Restore** after analysis to restore the model's original signal-logging configuration captured before MIL.
+Click **Restore** after analysis to restore the original signal logging configuration captured before MIL.
 
-## Important limitation
+## Important distinction
 
-The current logger is best-effort across Simulink block types. A model element can exist in the explorer without having a directly associated logged signal. In that case the app says so and keeps the exact cached signal list available for manual selection rather than inventing data.
+The tool is designed around:
+
+**select in model -> simulate once -> analyze cached evidence**
+
+not:
+
+**search a giant tree -> guess which signal belongs to a block**
+
+The structural tree is retained for Stateflow and model browsing, but direct Simulink canvas selection is the primary block-analysis workflow.
