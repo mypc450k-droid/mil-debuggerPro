@@ -33,6 +33,12 @@ classdef MILDebuggerProApp < handle
         DetailsArea matlab.ui.control.TextArea
         TimeSpinner matlab.ui.control.NumericEditField
         SessionLabel matlab.ui.control.Label
+        UseModelSelectionButton matlab.ui.control.Button
+        AnalyzeModelIOButton matlab.ui.control.Button
+        ClearIOGraphButton matlab.ui.control.Button
+        ModelSelectionLabel matlab.ui.control.Label
+        InputAxes matlab.ui.control.UIAxes
+        OutputAxes matlab.ui.control.UIAxes
     end
 
     properties (Access=private)
@@ -43,6 +49,8 @@ classdef MILDebuggerProApp < handle
         PreviousSelectedBlock char = ''
         LastDetectionMessage char = ''
         SignalDisplayNames cell = {}
+        CanvasSelectedBlocks cell = {}
+        LastCanvasSelectionKey char = ''
     end
 
     methods
@@ -85,7 +93,7 @@ classdef MILDebuggerProApp < handle
             app.UIFigure.CloseRequestFcn=@(~,~)app.closeApp();
 
             left=uipanel(app.UIFigure,'Position',[10 10 410 900], ...
-                'Title','Model Explorer | multi-select with Ctrl+Click');
+                'Title','Model Selection | select blocks directly in Simulink');
             top=uipanel(app.UIFigure,'Position',[430 780 1100 130],'Title','MIL Session');
 
             uilabel(top,'Position',[15 78 85 22],'Text','Active Model');
@@ -103,9 +111,19 @@ classdef MILDebuggerProApp < handle
             app.BlockTree=uitree(left,'Position',[10 230 390 620], ...
                 'Multiselect','on', ...
                 'SelectionChangedFcn',@(~,~)app.inspectSelection());
-            app.BlockTree.Tooltip=['Ctrl+Click to select multiple blocks/Stateflow elements. ' ...
-                'Then use Analyze tree selection.'];
+            app.BlockTree.Tooltip=['Optional structural browser. For analysis, select blocks directly in the ' ...
+                'Simulink canvas and use Use Model Selection.'];
+            app.UseModelSelectionButton=uibutton(left,'push','Text','Use Model Selection', ...
+                'Position',[10 190 145 28], ...
+                'ButtonPushedFcn',@(~,~)app.syncModelSelection(true));
+            app.AnalyzeModelIOButton=uibutton(left,'push','Text','Analyze Block I/O', ...
+                'Position',[165 190 135 28], ...
+                'ButtonPushedFcn',@(~,~)app.analyzeCanvasSelection());
+            app.ClearIOGraphButton=uibutton(left,'push','Text','Clear I/O Graph', ...
+                'Position',[305 190 95 28], ...
+                'ButtonPushedFcn',@(~,~)app.clearIOGraph());
             app.AnalyzeTreeButton=uibutton(left,'push','Text','Analyze Tree Selection', ...
+                'Visible','off', ...
                 'Position',[10 190 190 28], ...
                 'ButtonPushedFcn',@(~,~)app.analyzeTreeSelection());
             app.ClearGraphButton=uibutton(left,'push','Text','Clear Graph', ...
@@ -114,49 +132,62 @@ classdef MILDebuggerProApp < handle
             app.ClearSelectionButton=uibutton(left,'push','Text','Clear Selection', ...
                 'Position',[305 190 95 28], ...
                 'ButtonPushedFcn',@(~,~)app.clearAnalysisSelection());
-            app.SelectedLabel=uilabel(left,'Position',[10 135 390 45], ...
+            app.ModelSelectionLabel=uilabel(left,'Position',[10 135 390 45], ...
+                'Text','Canvas selection: none','FontWeight','bold','WordWrap','on');
+            app.SelectedLabel=uilabel(left,'Position',[10 75 390 45], ...
                 'Text','Selected: none','FontWeight','bold','WordWrap','on');
-            uilabel(left,'Position',[10 102 390 22], ...
-                'Text','Tip: use Ctrl+Click for any number of model elements.');
+            uilabel(left,'Position',[10 25 390 22], ...
+                'Text','Select blocks in Simulink with Ctrl+Click. No Model Explorer needed.');
 
             app.TabGroup=uitabgroup(app.UIFigure,'Position',[430 10 1100 760]);
-            tab1=uitab(app.TabGroup,'Title','Signals & Graph');
+            tab1=uitab(app.TabGroup,'Title','Block I/O');
+            tabSignals=uitab(app.TabGroup,'Title','Signals & Graph');
             tab2=uitab(app.TabGroup,'Title','Stateflow');
             tab3=uitab(app.TabGroup,'Title','Diagnostics');
             tab4=uitab(app.TabGroup,'Title','Trace');
 
-            app.PlotAxes=uiaxes(tab1,'Position',[15 300 1070 405]);
+            app.InputAxes=uiaxes(tab1,'Position',[15 380 1070 300]);
+            app.InputAxes.XGrid='on'; app.InputAxes.YGrid='on';
+            xlabel(app.InputAxes,'Time'); ylabel(app.InputAxes,'Input value');
+            title(app.InputAxes,'Selected Block Inputs');
+
+            app.OutputAxes=uiaxes(tab1,'Position',[15 50 1070 300]);
+            app.OutputAxes.XGrid='on'; app.OutputAxes.YGrid='on';
+            xlabel(app.OutputAxes,'Time'); ylabel(app.OutputAxes,'Output value');
+            title(app.OutputAxes,'Selected Block Outputs');
+
+            app.PlotAxes=uiaxes(tabSignals,'Position',[15 300 1070 405]);
             app.PlotAxes.XGrid='on'; app.PlotAxes.YGrid='on';
             xlabel(app.PlotAxes,'Time'); ylabel(app.PlotAxes,'Value');
             title(app.PlotAxes,'Select logged signals to plot');
 
-            uilabel(tab1,'Position',[15 268 190 22], ...
+            uilabel(tabSignals,'Position',[15 268 190 22], ...
                 'Text','Cached logged signals');
-            app.SelectionInfoLabel=uilabel(tab1,'Position',[215 268 520 22], ...
+            app.SelectionInfoLabel=uilabel(tabSignals,'Position',[215 268 520 22], ...
                 'Text','Run MIL to populate the cached signal list.');
-            app.SignalList=uilistbox(tab1,'Position',[15 70 1070 190], ...
+            app.SignalList=uilistbox(tabSignals,'Position',[15 70 1070 190], ...
                 'Multiselect','on', ...
                 'Items',{},'ItemsData',[], ...
                 'ValueChangedFcn',@(~,~)app.updateSignalSelectionInfo());
-            app.PlotSelectedButton=uibutton(tab1,'push','Text','Plot Selected Signals', ...
+            app.PlotSelectedButton=uibutton(tabSignals,'push','Text','Plot Selected Signals', ...
                 'Position',[15 25 145 32], ...
                 'ButtonPushedFcn',@(~,~)app.plotSelectedSignals());
-            app.SelectAllButton=uibutton(tab1,'push','Text','Select All Logged', ...
+            app.SelectAllButton=uibutton(tabSignals,'push','Text','Select All Logged', ...
                 'Position',[170 25 125 32], ...
                 'ButtonPushedFcn',@(~,~)app.selectAllSignals());
-            uibutton(tab1,'push','Text','Clear Graph', ...
+            uibutton(tabSignals,'push','Text','Clear Graph', ...
                 'Position',[305 25 95 32], ...
                 'ButtonPushedFcn',@(~,~)app.clearGraph());
-            uibutton(tab1,'push','Text','Clear Signal Selection', ...
+            uibutton(tabSignals,'push','Text','Clear Signal Selection', ...
                 'Position',[410 25 145 32], ...
                 'ButtonPushedFcn',@(~,~)app.clearAnalysisSelection());
-            uilabel(tab1,'Position',[760 38 85 22],'Text','Time cursor');
-            app.TimeSpinner=uieditfield(tab1,'numeric','Position',[840 38 110 22], ...
+            uilabel(tabSignals,'Position',[760 38 85 22],'Text','Time cursor');
+            app.TimeSpinner=uieditfield(tabSignals,'numeric','Position',[840 38 110 22], ...
                 'Value',0,'ValueChangedFcn',@(~,~)app.updateAtTime());
 
-            app.InputTable=uitable(tab1,'Position',[15 5 500 1], ...
+            app.InputTable=uitable(tabSignals,'Position',[15 5 500 1], ...
                 'ColumnName',{'Signal','Value at cursor'});
-            app.OutputTable=uitable(tab1,'Position',[520 5 565 1], ...
+            app.OutputTable=uitable(tabSignals,'Position',[520 5 565 1], ...
                 'ColumnName',{'Sample','Value'});
 
             app.StateTable=uitable(tab2,'Position',[15 55 1070 650], ...
@@ -320,13 +351,13 @@ classdef MILDebuggerProApp < handle
                     error('MILDebuggerPro:Simulation',sr.ErrorMessage);
                 end
 
-                app.Core.Session.create(app.ModelName,app.Inventory,cr,sr);
+                app.Core.Session.create(app.ModelName,app.Inventory,cr,sr,app.Core.Logging.getCaptureMap());
                 app.SessionLabel.Text=sprintf('Cached session: %s | %.3fs | %d signals', ...
                     datestr(app.Core.Session.Session.CreatedAt,'yyyy-mm-dd HH:MM:SS'), ...
                     sr.Elapsed,numel(app.Core.Session.Session.Signals));
 
                 app.refreshSignalList();
-                app.setStatus('MIL complete. Select any number of cached signals and plot without rerunning MIL.');
+                app.setStatus('MIL complete. Select blocks directly in Simulink, then click Analyze Block I/O.');
                 app.scanDiagnostics();
                 app.inspectStateflow();
             catch ME
@@ -681,13 +712,135 @@ classdef MILDebuggerProApp < handle
                     app.refreshModel();
                     return
                 end
+                app.syncModelSelection(false);
                 p=app.Core.ModelManager.getSelectedBlock(app.ModelName);
                 if ~isempty(p) && ~strcmp(p,app.PreviousSelectedBlock)
                     app.PreviousSelectedBlock=p;
-                    app.SelectedLabel.Text=['MATLAB selected: ' p];
                 end
             catch
             end
+        end
+
+        function syncModelSelection(app,showStatus)
+            if nargin<2, showStatus=false; end
+            if isempty(app.ModelName) || ~bdIsLoaded(app.ModelName), return; end
+            try
+                hs=find_system(app.ModelName,'FindAll','on','Type','Block');
+                selected={};
+                for k=1:numel(hs)
+                    try
+                        if strcmp(get_param(hs(k),'Selected'),'on')
+                            selected{end+1}=char(string(getfullname(hs(k)))); %#ok<AGROW>
+                        end
+                    catch
+                    end
+                end
+                selected=unique(selected,'stable');
+                key=strjoin(selected,'|');
+                if strcmp(key,app.LastCanvasSelectionKey), return; end
+                app.LastCanvasSelectionKey=key;
+                app.CanvasSelectedBlocks=selected;
+                if isempty(selected)
+                    app.ModelSelectionLabel.Text='Canvas selection: none';
+                    return
+                end
+                names=cellfun(@(p)char(string(get_param(p,'Name'))),selected,'UniformOutput',false);
+                app.ModelSelectionLabel.Text=sprintf('Canvas selection: %d block(s) | %s', ...
+                    numel(selected),strjoin(names,', '));
+                if showStatus
+                    app.setStatus(sprintf('Captured %d block(s) selected directly in the Simulink canvas.',numel(selected)));
+                end
+            catch ME
+                if showStatus, app.setStatus(['Could not read Simulink selection: ' ME.message]); end
+            end
+        end
+
+        function analyzeCanvasSelection(app)
+            app.syncModelSelection(true);
+            if isempty(app.CanvasSelectedBlocks)
+                app.setStatus('Select one or more blocks directly in the Simulink model using Ctrl+Click, then click Analyze Block I/O.');
+                return
+            end
+            if ~app.Core.Session.isSessionReady()
+                app.setStatus('Run MIL once first. Block I/O analysis then uses the cached run and does not simulate again.');
+                return
+            end
+            app.TabGroup.SelectedTab=app.TabGroup.Children(1);
+            cla(app.InputAxes); cla(app.OutputAxes);
+            hold(app.InputAxes,'on'); hold(app.OutputAxes,'on');
+            inputLegend={}; outputLegend={}; ni=0; no=0;
+            s=app.Core.Session.Session.Signals;
+            for b=1:numel(app.CanvasSelectedBlocks)
+                blk=app.CanvasSelectedBlocks{b};
+                for k=1:numel(s)
+                    isIn=false; isOut=false;
+                    try
+                        isOut=strcmp(char(string(s(k).SrcBlockPath)),blk);
+                        dst=s(k).DstBlockPaths;
+                        if ischar(dst), dst={dst}; end
+                        isIn=any(strcmp(dst,blk));
+                    catch
+                    end
+                    if isIn || isOut
+                        [t,y,ok]=app.extractXY(s(k).Values);
+                        if ~ok, continue; end
+                        if size(y,2)>1, y=y(:,1); end
+                        label=app.signalFriendlyLabel(s(k),blk,isIn,isOut);
+                        try
+                            if isIn
+                                plot(app.InputAxes,t,y,'LineWidth',1.1);
+                                inputLegend{end+1}=label; ni=ni+1; %#ok<AGROW>
+                            end
+                            if isOut
+                                plot(app.OutputAxes,t,y,'LineWidth',1.1);
+                                outputLegend{end+1}=label; no=no+1; %#ok<AGROW>
+                            end
+                        catch
+                        end
+                    end
+                end
+            end
+            hold(app.InputAxes,'off'); hold(app.OutputAxes,'off');
+            grid(app.InputAxes,'on'); grid(app.OutputAxes,'on');
+            title(app.InputAxes,sprintf('Inputs of %d selected block(s) | %d signal(s)',numel(app.CanvasSelectedBlocks),ni));
+            title(app.OutputAxes,sprintf('Outputs of %d selected block(s) | %d signal(s)',numel(app.CanvasSelectedBlocks),no));
+            if ~isempty(inputLegend), legend(app.InputAxes,inputLegend,'Interpreter','none','Location','best'); end
+            if ~isempty(outputLegend), legend(app.OutputAxes,outputLegend,'Interpreter','none','Location','best'); end
+            if ni==0 && no==0
+                app.setStatus('Selected blocks have no matching cached logged I/O. Check logging coverage, or inspect the exact logged-signal list.');
+            else
+                app.setStatus(sprintf('Analyzed %d selected block(s): %d input and %d output signal(s). No simulation was run.', ...
+                    numel(app.CanvasSelectedBlocks),ni,no));
+            end
+        end
+
+        function txt=signalFriendlyLabel(~,s,~,isIn,isOut)
+            src=char(string(s.SrcBlockPath)); dst='';
+            try
+                if ~isempty(s.DstBlockPaths), dst=strjoin(s.DstBlockPaths,', '); end
+            catch
+            end
+            name=char(string(s.OriginalName));
+            if isempty(name), name=char(string(s.Name)); end
+            if isIn && isOut
+                direction='I/O';
+            elseif isIn
+                direction='IN';
+            else
+                direction='OUT';
+            end
+            if isempty(src), src='unknown source'; end
+            if isempty(dst), dst='unknown destination'; end
+            txt=sprintf('%s | %s | %s -> %s',direction,name,src,dst);
+        end
+
+        function clearIOGraph(app)
+            cla(app.InputAxes); cla(app.OutputAxes);
+            title(app.InputAxes,'Selected Block Inputs');
+            title(app.OutputAxes,'Selected Block Outputs');
+            xlabel(app.InputAxes,'Time'); ylabel(app.InputAxes,'Input value');
+            xlabel(app.OutputAxes,'Time'); ylabel(app.OutputAxes,'Output value');
+            app.setStatus('Block I/O graphs cleared. Cached MIL data remains available.');
         end
 
         function restoreModel(app)
