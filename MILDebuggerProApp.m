@@ -360,7 +360,10 @@ classdef MILDebuggerProApp < handle
                     sr.Elapsed,numel(app.Core.Session.Session.Signals));
 
                 app.refreshSignalList();
-                app.setStatus('MIL complete. Select blocks directly in Simulink, then click Analyze Block I/O.');
+                cov=app.Core.Logging.getCoverage();
+                app.setStatus(sprintf(['MIL complete. Capture coverage: %d/%d lines enabled, %d failed. ' ...
+                    'Select blocks directly in Simulink, then click Analyze Block I/O.'], ...
+                    cov.Enabled,cov.Requested,cov.Failed));
                 app.scanDiagnostics();
                 app.inspectStateflow();
             catch ME
