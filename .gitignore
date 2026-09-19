@@ -1,0 +1,10 @@
+*.asv
+slprj/
+*_grt_rtw/
+*_ert_rtw/
+*.mex*
+*.pdb
+*.slxc
+*.mat
+.vscode/
+.idea/
