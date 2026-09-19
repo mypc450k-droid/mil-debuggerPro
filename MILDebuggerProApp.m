@@ -92,6 +92,9 @@ classdef MILDebuggerProApp < handle
 
             app.BlockTree=uitree(left,'Position',[10 70 370 760], ...
                 'SelectionChangedFcn',@(~,~)app.inspectSelection());
+            % TreeNode itself has no Tooltip property in R2024b. Keep the
+            % tree-level tooltip for guidance and store block type in Tag.
+            app.BlockTree.Tooltip='Click a block to inspect it. Block type is stored in each node Tag.';
             app.SelectedLabel=uilabel(left,'Position',[10 25 370 30],'Text','Selected: none','FontWeight','bold');
 
             app.TabGroup=uitabgroup(app.UIFigure,'Position',[410 10 1080 735]);
@@ -158,7 +161,15 @@ classdef MILDebuggerProApp < handle
                 end
 
                 app.Inventory=app.Core.Discovery.discover(m);
-                app.populateTree();
+                try
+                    app.populateTree();
+                catch treeME
+                    % A UI tree rendering problem must not hide the detected
+                    % model. Keep the active model visible and report the
+                    % rendering problem explicitly.
+                    app.setStatus(['Model detected, but tree population failed: ' treeME.message]);
+                    return
+                end
                 app.LastDetectionMessage=info.Message;
                 app.setStatus(sprintf('%s | %d blocks | %d signal lines',info.Message, ...
                     app.Inventory.BlockCount,app.Inventory.SignalCount));
@@ -171,10 +182,12 @@ classdef MILDebuggerProApp < handle
             delete(app.BlockTree.Children);
             if isempty(app.ModelName), return; end
             root=uitreenode(app.BlockTree,'Text',app.ModelName,'NodeData',app.ModelName);
+            root.Tag='Model';
             for k=1:numel(app.Inventory.Blocks)
                 b=app.Inventory.Blocks(k);
                 n=uitreenode(root,'Text',b.Name,'NodeData',b.Path);
-                n.Tooltip=b.BlockType;
+                % R2024b TreeNode supports Tag, not Tooltip.
+                n.Tag=char(string(b.BlockType));
             end
             expand(root);
         end
